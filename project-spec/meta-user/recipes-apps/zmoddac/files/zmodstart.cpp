@@ -54,6 +54,9 @@ volatile bool running = true;
 ZMODDAC1411* g_dacZmod = NULL;
 ZMODADC1410* g_adcZmod = NULL;
 
+// Add global variable to track last used DAC sample count
+volatile int g_lastDacSampleCount = 1300;  // Default value
+
 // File save paths
 const char* DAC_CSV_FILE_PATH = "dac_signal_data.csv";
 const char* ADC_DETAILED_CSV_FILE_PATH = "adc_detailed_data.csv";
@@ -115,6 +118,10 @@ void dacGenerateFromComplex(float* realData, float* imagData, int numSamples) {
         numSamples = MAX_SAMPLES;
     }
     
+    // Update global sample count tracker
+    g_lastDacSampleCount = numSamples;
+    std::cout << "Updated g_lastDacSampleCount to " << g_lastDacSampleCount << std::endl;
+    
     // Allocate DAC channel buffer
     size_t length = numSamples;
     uint32_t *buf = g_dacZmod->allocChannelsBuffer(length);
@@ -175,36 +182,42 @@ void dacGenerateFromComplex(float* realData, float* imagData, int numSamples) {
     saveSignalToCSV(realData, imagData, numSamples, DAC_CSV_FILE_PATH);
 }
 
-// Function to capture ADC data and send it to MATLAB client
+
 bool handleReceiveCommand(int client_fd) {
-    if (!g_adcZmod) {
-        std::cerr << "ADC not initialized!" << std::endl;
-        return false;
-    }
-    
-    // Send acknowledgment to client
-    const char* reply = "Starting receiving";
-    if (send(client_fd, reply, strlen(reply), 0) < 0) {
-        perror("Send acknowledgment failed");
-        return false;
-    }
-    
-    // Using 1300 samples to match what MATLAB expects
-    int numSamples = 1300;
-    
-    // Send the number of samples to MATLAB
-    printf("Informed MATLAB to expect %d samples\n", numSamples);
-    if (send(client_fd, &numSamples, sizeof(int32_t), 0) < 0) {
-        perror("Failed to send sample count");
-        return false;
-    }
-    
-    // Wait to ensure client has processed previous message
-    usleep(100000); // 100ms
-    
-    // Create buffer for ADC data
-    size_t adcBufferLength = numSamples;
-    printf("Attempting to allocate DMA buffer, size: %zu\n", adcBufferLength * sizeof(uint32_t));
+       if (!g_adcZmod) {
+           std::cerr << "ADC not initialized!" << std::endl;
+           return false;
+       }
+       
+       // Send acknowledgment to client
+       const char* reply = "Starting receiving";
+       if (send(client_fd, reply, strlen(reply), 0) < 0) {
+           perror("Send acknowledgment failed");
+           return false;
+       }
+       
+       // Use the same sample count as the last DAC operation
+       int numSamples = g_lastDacSampleCount;
+       
+       // Print detailed debug information
+       std::cout << "Using sample count from last DAC operation: " << numSamples << std::endl;
+       
+       // Send the sample count as a formatted string instead of binary
+       char sampleCountStr[32];
+       sprintf(sampleCountStr, "SAMPLES=%d", numSamples);
+       std::cout << "Sending sample count as string: " << sampleCountStr << std::endl;
+       
+       if (send(client_fd, sampleCountStr, strlen(sampleCountStr), 0) < 0) {
+           perror("Failed to send sample count string");
+           return false;
+       }
+       
+       // Wait to ensure client has processed previous message
+       usleep(100000); // 100ms
+       
+       // Create buffer for ADC data
+       size_t adcBufferLength = numSamples;
+       printf("Attempting to allocate DMA buffer, size: %zu\n", adcBufferLength * sizeof(uint32_t));
     
     uint32_t *adcBuffer = g_adcZmod->allocChannelsBuffer(adcBufferLength);
     
@@ -341,6 +354,7 @@ int main() {
     std::cout << "ADC configuration: sampling rate=" << ADC_SAMPLING_RATE/1000000 
               << " MHz, gain=" << (int)ADC_GAIN 
               << ", scaling factor=" << ADC_SCALING_FACTOR << std::endl;
+    std::cout << "Initial sample count set to: " << g_lastDacSampleCount << std::endl;
     
     // Create socket
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
