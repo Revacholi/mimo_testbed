@@ -46,7 +46,7 @@
 #define ADC_GAIN 0  // 
 
 // ADC scaling factor to match DAC amplitude
-#define ADC_SCALING_FACTOR 0.325
+#define ADC_SCALING_FACTOR 1
 
 // Global variables
 volatile bool running = true;
